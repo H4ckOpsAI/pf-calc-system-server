@@ -42,7 +42,8 @@ const userSchema = new mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
-    }
+    },
+    phone: { type: String }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

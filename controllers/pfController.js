@@ -15,11 +15,11 @@ exports.getMyPF = async (req, res) => {
         // Fetch PF records for this employee
         const pfRecords = await PFCalculation.find({ employeeId }).sort({ year: -1, month: -1 });
 
-        // Calculate totals (optional, or just send records)
-        const totalContribution = pfRecords.reduce((acc, curr) => acc + curr.totalPF, 0);
+        // Calculate totals dynamically using cumulative mathematical bounds
+        const latestRecord = pfRecords.length > 0 ? pfRecords[0] : null;
+        const totalContribution = latestRecord ? latestRecord.cumulativeBalance : 0;
 
         res.json({
-            employeeId,
             employeeId,
             name: req.user.name,
             designation: req.user.designation,
@@ -29,6 +29,30 @@ exports.getMyPF = async (req, res) => {
         });
     } catch (error) {
         console.error('Get My PF Error:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+exports.getAllPF = async (req, res) => {
+    try {
+        const staffUsers = await User.find({ role: 'Staff', isActive: true });
+        
+        const pfSummaries = await Promise.all(staffUsers.map(async (user) => {
+            const latestRecord = await PFCalculation.findOne({ employeeId: user.employeeId }).sort({ year: -1, month: -1 });
+            return {
+                _id: user._id,
+                employeeId: user.employeeId,
+                name: user.name,
+                department: user.department,
+                pfScheme: user.pfScheme,
+                currentBalance: latestRecord ? latestRecord.cumulativeBalance : 0,
+                lastContribution: latestRecord ? latestRecord.totalPF : 0
+            };
+        }));
+        
+        res.json(pfSummaries);
+    } catch (error) {
+        console.error('Get All PF Error:', error);
         res.status(500).json({ message: 'Server Error' });
     }
 };
@@ -46,14 +70,16 @@ exports.downloadTemplate = async (req, res) => {
             'department',
             'staffCategory',
             'pfScheme',
-            'basicPay'
+            'basicPay',
+            'month',
+            'year'
         ];
 
         // Create sample data
         // Create sample data
         const sampleData = [
-            ['EMP001', 'Mohan', 'Vice Chancellor', 'Administration', 'Teaching', 'CPF', 400000],
-            ['EMP002', 'Sudha', 'Dean Students', 'ECE', 'Teaching', 'CPF', 300000]
+            ['EMP001', 'Mohan', 'Vice Chancellor', 'Administration', 'Teaching', 'CPF', 400000, 4, 2024],
+            ['EMP002', 'Sudha', 'Dean Students', 'ECE', 'Teaching', 'CPF', 300000, 4, 2024]
         ];
 
         // Create worksheet

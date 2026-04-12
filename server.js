@@ -34,11 +34,13 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const pfRoutes = require('./routes/pfRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
+const pfActionsRoutes = require('./routes/pfActionsRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/pf', pfRoutes);
 app.use('/api/payroll', payrollRoutes);
+app.use('/api/actions', pfActionsRoutes);
 
 app.get('/', (req, res) => {
     res.send('API is running...');

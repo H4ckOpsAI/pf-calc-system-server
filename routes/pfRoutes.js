@@ -9,4 +9,7 @@ router.get('/my', authenticateJWT, pfController.getMyPF);
 // Download Excel Template (Accessible to PayrollOfficer)
 router.get('/template', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), pfController.downloadTemplate);
 
+// Get All PF for Manage PF
+router.get('/all', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), pfController.getAllPF);
+
 module.exports = router;

@@ -12,5 +12,9 @@ router.put('/status', authenticateJWT, authorizeRole(['Admin']), authorizePermis
 // Permission Management (Admin Only)
 router.get('/permissions', authenticateJWT, authorizeRole(['Admin']), userController.getPermissions);
 router.put('/permissions', authenticateJWT, authorizeRole(['Admin']), userController.updatePermission);
+router.get('/logs', authenticateJWT, authorizeRole(['Admin']), authorizePermission('canManageUsers'), userController.getLoginLogs);
+
+// Common Profile setting
+router.put('/profile', authenticateJWT, userController.updateProfile);
 
 module.exports = router;

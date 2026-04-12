@@ -13,6 +13,9 @@ const pfCalculationSchema = new mongoose.Schema({
     employeePF: { type: Number, required: true },
     employerPF: { type: Number, default: 0 }, // 0 for GPF
     totalPF: { type: Number, required: true },
+    overrideApplied: { type: Boolean, default: false },
+    advanceEMI: { type: Number, default: 0 },
+    partFinalWithdrawal: { type: Number, default: 0 },
 
     // Audit Fields
     processedBy: {
@@ -21,8 +24,13 @@ const pfCalculationSchema = new mongoose.Schema({
         required: true
     },
     processedAt: { type: Date, default: Date.now },
-    month: { type: Number }, // Optional: separate month/year tracking
-    year: { type: Number }
+    month: { type: Number, required: true },
+    year: { type: Number, required: true },
+    financialYear: { type: String, required: true },
+    cumulativeBalance: { type: Number, required: true }
 });
+
+// Enforce single calculation per employee per month
+pfCalculationSchema.index({ employeeId: 1, year: 1, month: 1 }, { unique: true });
 
 module.exports = mongoose.model('PFCalculation', pfCalculationSchema);

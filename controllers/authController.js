@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Session = require('../models/Session');
 const LoginLog = require('../models/LoginLog');
+const { logActivity } = require('../utils/logger');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -92,6 +93,7 @@ exports.login = async (req, res) => {
 
         // Log Success
         await LoginLog.create({ userId: user._id, ipAddress, status: 'success' });
+        await logActivity({ userId: user._id, role: user.role, action: 'LOGIN', details: 'User authenticated successfully.' });
 
         // Set Cookie
         res.cookie('token', accessToken, {

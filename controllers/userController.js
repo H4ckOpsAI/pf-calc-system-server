@@ -1,5 +1,8 @@
 const User = require('../models/User');
 const Permission = require('../models/Permission');
+const LoginLog = require('../models/LoginLog');
+const ActivityLog = require('../models/ActivityLog');
+const { logActivity } = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 
 exports.createUser = async (req, res) => {
@@ -26,6 +29,14 @@ exports.createUser = async (req, res) => {
         });
 
         res.status(201).json({ message: 'User created successfully', user });
+        
+        await logActivity({
+            userId: req.user._id, // Assume created by the current admin/user. Wait, what if it's public register?
+            role: req.user ? req.user.role : 'System',
+            action: 'USER_CREATION',
+            targetUserId: user._id,
+            details: `Created new user: ${user.email} (${user.role})`
+        });
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
     }
@@ -94,6 +105,40 @@ exports.updatePermission = async (req, res) => {
         await permDoc.save();
         res.json({ message: 'Permissions updated', permission: permDoc });
     } catch (error) {
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+exports.getLoginLogs = async (req, res) => {
+    try {
+        const logs = await ActivityLog.find({}).populate('userId', 'name email employeeId').sort({ timestamp: -1 });
+        res.json(logs);
+    } catch (error) {
+        console.error('Get Activity Logs Error:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+exports.updateProfile = async (req, res) => {
+    try {
+        const { name, phone } = req.body;
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        if (name) user.name = name;
+        if (phone !== undefined) user.phone = phone; // Allow clearing phone
+        await user.save();
+
+        await logActivity({
+            userId: req.user._id,
+            role: req.user.role,
+            action: 'UPDATE_PROFILE',
+            details: 'Updated profile settings.'
+        });
+
+        res.json({ message: 'Profile updated successfully', user: { name: user.name, phone: user.phone, email: user.email } });
+    } catch (error) {
+        console.error('Profile Update Error:', error);
         res.status(500).json({ message: 'Server Error' });
     }
 };

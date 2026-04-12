@@ -21,7 +21,10 @@ const employeeTempSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
-    uploadedAt: { type: Date, default: Date.now }
+    uploadedAt: { type: Date, default: Date.now },
+    month: { type: Number, required: true },
+    year: { type: Number, required: true },
+    financialYear: { type: String, required: true }
 });
 
 module.exports = mongoose.model('EmployeeTemp', employeeTempSchema);

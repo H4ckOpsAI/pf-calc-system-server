@@ -1,7 +1,11 @@
+const ContributionOverride = require('../models/ContributionOverride');
+const Withdrawal = require('../models/Withdrawal');
+const AdvanceRepayment = require('../models/AdvanceRepayment');
 const xlsx = require('xlsx');
 const EmployeeTemp = require('../models/EmployeeTemp');
 const PFCalculation = require('../models/PFCalculation');
 const User = require('../models/User');
+const { logActivity } = require('../utils/logger');
 
 // Helper: Get Contribution Rate
 const getContributionRate = (scheme) => {
@@ -43,11 +47,13 @@ exports.uploadPayroll = async (req, res) => {
                 department,
                 staffCategory: staffCategoryRaw, // Rename to avoid conflict with validated variable
                 pfScheme: pfSchemeRaw,           // Rename to avoid conflict with validated variable
-                basicPay
+                basicPay,
+                month,
+                year
             } = row;
 
             // Basic Validation for non-numeric/non-enum fields
-            if (!employeeId || !staffName || !designation || !department || !staffCategoryRaw || !pfSchemeRaw) {
+            if (!employeeId || !staffName || !designation || !department || !staffCategoryRaw || !pfSchemeRaw || !month || !year) {
                 errors.push(`Row ${rowNumber}: Missing required fields.`);
                 continue;
             }
@@ -86,10 +92,38 @@ exports.uploadPayroll = async (req, res) => {
                 continue;
             }
 
-            // Validate Employee Exists in System
+            // Validate Month and Year
+            const parsedMonth = parseInt(month, 10);
+            const parsedYear = parseInt(year, 10);
+            if (isNaN(parsedMonth) || parsedMonth < 1 || parsedMonth > 12) {
+                errors.push(`Row ${rowNumber}: Invalid Month '${month}'.`);
+                continue;
+            }
+            if (isNaN(parsedYear) || parsedYear < 2000) {
+                errors.push(`Row ${rowNumber}: Invalid Year '${year}'.`);
+                continue;
+            }
+
+            // Calculate Financial Year
+            let financialYear;
+            if (parsedMonth >= 4) {
+                financialYear = `${parsedYear}-${parsedYear + 1}`;
+            } else {
+                financialYear = `${parsedYear - 1}-${parsedYear}`;
+            }
+
+            // Validate Employee Exists and is Eligible
             const user = await User.findOne({ employeeId });
             if (!user) {
                 errors.push(`Row ${rowNumber}: Employee ID '${employeeId}' not found in system.`);
+                continue;
+            }
+            if (user.role !== 'Staff') {
+                errors.push(`Row ${rowNumber}: Employee ID '${employeeId}' is a ${user.role} and is not eligible for PF calculation.`);
+                continue;
+            }
+            if (!user.isActive) {
+                errors.push(`Row ${rowNumber}: Employee ID '${employeeId}' is currently inactive.`);
                 continue;
             }
 
@@ -102,6 +136,9 @@ exports.uploadPayroll = async (req, res) => {
                 staffCategory,
                 pfScheme,
                 basicPay: Number(basicPay),
+                month: parsedMonth,
+                year: parsedYear,
+                financialYear,
                 uploadedBy: req.user._id,
                 uploadedAt: new Date()
             });
@@ -157,26 +194,149 @@ exports.processPayroll = async (req, res) => {
         }
 
         const calculatedRecords = [];
+        const runningBalances = {}; // Track balances locally if processing multiple records
 
         // 2. Calculation Loop
         for (const record of tempRecords) {
-            const { employeeId, staffName, designation, department, staffCategory, pfScheme, basicPay } = record;
+            const { employeeId, staffName, designation, department, staffCategory, pfScheme, basicPay, month, year, financialYear } = record;
 
-            // Activity 2.3 & 3.1: Dynamic Rule Selection & Calculation
+            // Activity 3.x: Duplicate Prevention
+            const existingRecord = await PFCalculation.findOne({ employeeId, month, year });
+            if (existingRecord) {
+                return res.status(400).json({ message: `Duplicate processing blocked: PF for ${staffName} (${employeeId}) for ${month}/${year} already exists.` });
+            }
+
+            // Activity 3.x: Fetch previous balance
+            if (runningBalances[employeeId] === undefined) {
+                const previousRecord = await PFCalculation.findOne({ employeeId }).sort({ year: -1, month: -1 });
+                runningBalances[employeeId] = previousRecord ? previousRecord.cumulativeBalance : 0;
+            }
+
+            // Define Payroll Date mapping
+            const payrollDate = new Date(year, month - 1);
+
+            // Fetch active override applying to future payroll ONLY
+            const override = await ContributionOverride.findOne({ 
+                employeeId, 
+                status: 'approved',
+                approvedAt: { $lte: payrollDate }
+            }).sort({ approvedAt: -1 });
+
+            let overrideApplied = false;
             const rate = getContributionRate(pfScheme);
+            let basePF = Math.round(basicPay * rate);
+            let employeePF;
 
-            // Standard Rounding (Math.round)
-            const employeePF = Math.round(basicPay * rate);
+            if (override) {
+                employeePF = override.amount; // persistent value
+                overrideApplied = true;
+            } else {
+                employeePF = basePF;
+            }
+
+            console.log({
+                month,
+                basePF,
+                override: override?.amount,
+                finalPF: employeePF
+            });
+
+            // Task 1: Strict Monthly Limit on EmployeePF
+            if (employeePF > 40000) {
+                employeePF = 40000;
+            }
+
+            // Task 1: Strict Yearly Limit (5,00,000)
+            const previousYearly = await PFCalculation.aggregate([
+                { $match: { employeeId, financialYear } },
+                { $group: { _id: null, total: { $sum: '$employeePF' } } }
+            ]);
+            let currentYearlySum = previousYearly.length > 0 ? previousYearly[0].total : 0;
+
+            if (currentYearlySum + employeePF > 500000) {
+                employeePF = 500000 - currentYearlySum;
+                if (employeePF < 0) employeePF = 0;
+            }
 
             // Employer Contribution Logic (CPF only)
             let employerPF = 0;
             if (pfScheme === 'CPF') {
-                employerPF = Math.round(basicPay * 0.10); // Employer always matches 10% for CPF
-            } else {
-                employerPF = 0; // GPF has 0 employer contribution
+                employerPF = Math.round(basicPay * 0.10); // Employer always matches 10%
+            }
+
+            let advanceDeduction = 0;
+            let appliedAdvance = null;
+
+            const advanceWithdrawal = await Withdrawal.findOne({
+                employeeId,
+                type: 'advance',
+                status: 'approved',
+                processedAt: { $exists: false }
+            }).sort({ approvedAt: 1 });
+            
+            if (advanceWithdrawal) {
+                advanceDeduction = advanceWithdrawal.amount;
+                appliedAdvance = advanceWithdrawal;
             }
 
             const totalPF = employeePF + employerPF;
+
+            const withdrawal = await Withdrawal.findOne({
+                employeeId,
+                type: 'part-final',
+                status: 'approved',
+                processedAt: { $exists: false }
+            }).sort({ approvedAt: 1 });
+
+            let partFinalWithdrawal = 0;
+            let appliedWithdrawal = null;
+
+            if (withdrawal) {
+                partFinalWithdrawal = withdrawal.amount;
+                appliedWithdrawal = withdrawal;
+            }
+
+            // Activity 3.x: Process Active Advance EMI
+            const activeAdvance = await AdvanceRepayment.findOne({ employeeId, isActive: true });
+            let advanceEMI = 0;
+
+            if (activeAdvance) {
+                advanceEMI = activeAdvance.monthlyInstallment;
+                
+                if (activeAdvance.remainingBalance <= advanceEMI) {
+                    advanceEMI = activeAdvance.remainingBalance;
+                    activeAdvance.isActive = false;
+                    activeAdvance.monthsRemaining = 0;
+                    activeAdvance.remainingBalance = 0;
+                } else {
+                    activeAdvance.monthsRemaining -= 1;
+                    activeAdvance.remainingBalance -= advanceEMI;
+                    if (activeAdvance.monthsRemaining <= 0) activeAdvance.isActive = false;
+                }
+                await activeAdvance.save();
+            }
+
+            const cumulativeBalance = runningBalances[employeeId] + totalPF - advanceDeduction + advanceEMI - partFinalWithdrawal;
+            runningBalances[employeeId] = cumulativeBalance;
+
+            if (appliedWithdrawal) {
+                appliedWithdrawal.processedAt = new Date();
+                appliedWithdrawal.status = 'processed';
+                await appliedWithdrawal.save();
+            }
+
+            if (appliedAdvance) {
+                appliedAdvance.processedAt = new Date();
+                appliedAdvance.status = 'processed';
+                await appliedAdvance.save();
+            }
+
+            console.log({
+                withdrawalFound: !!withdrawal,
+                partFinalWithdrawal,
+                advanceDeduction,
+                cumulativeBalance
+            });
 
             calculatedRecords.push({
                 employeeId,
@@ -189,10 +349,15 @@ exports.processPayroll = async (req, res) => {
                 employeePF,
                 employerPF,
                 totalPF,
+                overrideApplied,
+                advanceEMI,
+                partFinalWithdrawal,
+                cumulativeBalance,
+                financialYear,
                 processedBy: req.user._id,
                 processedAt: new Date(),
-                month: new Date().getMonth() + 1, // Store current processing month (Simple version)
-                year: new Date().getFullYear()
+                month,
+                year
             });
         }
 
@@ -201,6 +366,13 @@ exports.processPayroll = async (req, res) => {
 
         // 4. Clear Temp Records
         await EmployeeTemp.deleteMany({});
+
+        await logActivity({
+            userId: req.user._id,
+            role: req.user.role,
+            action: 'PROCESS_PAYROLL',
+            details: `Processed payroll mapping ${calculatedRecords.length} records successfully.`
+        });
 
         res.json({
             message: 'Payroll processed successfully',
