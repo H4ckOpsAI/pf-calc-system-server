@@ -64,21 +64,26 @@ exports.login = async (req, res) => {
         const user = await User.findOne({ email });
 
         if (!user) {
-            await LoginLog.create({ userId: null, ipAddress, status: 'failed' }); // UserId null for unknown user? May need handle.
-            // If user not found, we can't log userId. Logic adjustment: LoginLog schema requires userId.
-            // We'll skip logging userId if user not found, or log 'unknown'.
-            // For now, let's just return error. Log requires userId.
+            await LoginLog.create({ userId: null, ipAddress, status: 'failed' });
+            await logActivity({
+                userId: null,
+                role: 'Unknown',
+                action: 'LOGIN_FAILED',
+                details: `Failed login attempt for email: ${email}`
+            }).catch(() => {}); // safe: userId required in schema, skip if it fails
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
         if (!user.isActive) {
             await LoginLog.create({ userId: user._id, ipAddress, status: 'failed' });
+            await logActivity({ userId: user._id, role: user.role, action: 'LOGIN_FAILED', details: `Account disabled: ${email}` });
             return res.status(403).json({ message: 'Account is disabled' });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             await LoginLog.create({ userId: user._id, ipAddress, status: 'failed' });
+            await logActivity({ userId: user._id, role: user.role, action: 'LOGIN_FAILED', details: `Incorrect password for email: ${email}` });
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
@@ -93,7 +98,7 @@ exports.login = async (req, res) => {
 
         // Log Success
         await LoginLog.create({ userId: user._id, ipAddress, status: 'success' });
-        await logActivity({ userId: user._id, role: user.role, action: 'LOGIN', details: 'User authenticated successfully.' });
+        await logActivity({ userId: user._id, role: user.role, action: 'LOGIN_SUCCESS', details: `User logged in successfully from ${ipAddress}` });
 
         // Set Cookie
         res.cookie('token', accessToken, {
@@ -144,7 +149,8 @@ exports.logout = async (req, res) => {
             // Let's decode the token to get the user ID
             const decoded = jwt.decode(token);
             if (decoded) {
-                await Session.deleteMany({ userId: decoded.id }); // STRICT: Invalidate all sessions for this user on logout. Safe approach for this stage.
+                await Session.deleteMany({ userId: decoded.id });
+                await logActivity({ userId: decoded.id, role: 'Unknown', action: 'LOGOUT', details: 'User logged out.' }).catch(() => {});
             }
         }
 

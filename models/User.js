@@ -43,7 +43,9 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
-    phone: { type: String }
+    phone: { type: String },
+    resetOtp: { type: String },
+    otpExpiry: { type: Date }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

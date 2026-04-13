@@ -1,6 +1,8 @@
 const xlsx = require('xlsx');
 const PFCalculation = require('../models/PFCalculation');
 const User = require('../models/User');
+const ContributionOverride = require('../models/ContributionOverride');
+const Withdrawal = require('../models/Withdrawal');
 
 exports.getMyPF = async (req, res) => {
     try {
@@ -53,6 +55,26 @@ exports.getAllPF = async (req, res) => {
         res.json(pfSummaries);
     } catch (error) {
         console.error('Get All PF Error:', error);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+exports.getPFByEmployeeId = async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+
+        const pfRecords = await PFCalculation.find({ employeeId }).sort({ year: -1, month: -1 });
+        const overrides = await ContributionOverride.find({ employeeId }).sort({ requestedAt: -1 });
+        const withdrawals = await Withdrawal.find({ employeeId }).sort({ requestedAt: -1 });
+
+        res.json({
+            employeeId,
+            pfRecords,
+            overrides,
+            withdrawals
+        });
+    } catch (error) {
+        console.error('Get PF By EmployeeId Error:', error);
         res.status(500).json({ message: 'Server Error' });
     }
 };

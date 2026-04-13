@@ -12,4 +12,7 @@ router.get('/template', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin
 // Get All PF for Manage PF
 router.get('/all', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), pfController.getAllPF);
 
+// Get explicitly requested PF bounds safely (Read-Only)
+router.get('/:employeeId', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), pfController.getPFByEmployeeId);
+
 module.exports = router;
