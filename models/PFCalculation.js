@@ -13,6 +13,7 @@ const pfCalculationSchema = new mongoose.Schema({
     employeePF: { type: Number, required: true },
     employerPF: { type: Number, default: 0 }, // 0 for GPF
     totalPF: { type: Number, required: true },
+    tax: { type: Number, default: 0 },
     overrideApplied: { type: Boolean, default: false },
     advanceEMI: { type: Number, default: 0 },
     partFinalWithdrawal: { type: Number, default: 0 },

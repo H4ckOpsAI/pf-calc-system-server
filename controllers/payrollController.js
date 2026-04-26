@@ -196,6 +196,9 @@ exports.processPayroll = async (req, res) => {
         const calculatedRecords = [];
         const runningBalances = {}; // Track balances locally if processing multiple records
 
+        // Sort records chronologically so cumulative balances are built in order
+        tempRecords.sort((a, b) => new Date(a.year, a.month - 1) - new Date(b.year, b.month - 1));
+
         // 2. Calculation Loop
         for (const record of tempRecords) {
             const { employeeId, staffName, designation, department, staffCategory, pfScheme, basicPay, month, year, financialYear } = record;
@@ -249,9 +252,10 @@ exports.processPayroll = async (req, res) => {
             // Task 1: Strict Yearly Limit (5,00,000)
             const previousYearly = await PFCalculation.aggregate([
                 { $match: { employeeId, financialYear } },
-                { $group: { _id: null, total: { $sum: '$employeePF' } } }
+                { $group: { _id: null, total: { $sum: '$employeePF' }, totalPFSum: { $sum: '$totalPF' } } }
             ]);
             let currentYearlySum = previousYearly.length > 0 ? previousYearly[0].total : 0;
+            let currentYearlyTotalPFSum = previousYearly.length > 0 ? previousYearly[0].totalPFSum : 0;
 
             if (currentYearlySum + employeePF > 500000) {
                 employeePF = 500000 - currentYearlySum;
@@ -316,7 +320,19 @@ exports.processPayroll = async (req, res) => {
                 await activeAdvance.save();
             }
 
-            const cumulativeBalance = runningBalances[employeeId] + totalPF - advanceDeduction + advanceEMI - partFinalWithdrawal;
+            // Tax Calculation: Progressive Bracket System based on cumulative yearly PF
+            let tax = null;
+            let cumulativeYearlyTotalPF = currentYearlyTotalPFSum + totalPF;
+            
+            if (cumulativeYearlyTotalPF > 2000000) {
+                tax = Math.round(totalPF * 0.07);
+            } else if (cumulativeYearlyTotalPF > 1000000) {
+                tax = Math.round(totalPF * 0.05);
+            } else if (cumulativeYearlyTotalPF >= 700000) {
+                tax = Math.round(totalPF * 0.03);
+            }
+
+            const cumulativeBalance = runningBalances[employeeId] + totalPF - advanceDeduction + advanceEMI - partFinalWithdrawal - (tax || 0);
             runningBalances[employeeId] = cumulativeBalance;
 
             if (appliedWithdrawal) {
@@ -335,7 +351,8 @@ exports.processPayroll = async (req, res) => {
                 withdrawalFound: !!withdrawal,
                 partFinalWithdrawal,
                 advanceDeduction,
-                cumulativeBalance
+                cumulativeBalance,
+                tax
             });
 
             calculatedRecords.push({
@@ -349,6 +366,7 @@ exports.processPayroll = async (req, res) => {
                 employeePF,
                 employerPF,
                 totalPF,
+                tax,
                 overrideApplied,
                 advanceEMI,
                 partFinalWithdrawal,
@@ -363,6 +381,39 @@ exports.processPayroll = async (req, res) => {
 
         // 3. Save to PFCalculation Collection
         await PFCalculation.insertMany(calculatedRecords);
+
+        // Update PFTaxDetail dynamically for each processed employee (Charu's feature sync)
+        for (const record of calculatedRecords) {
+            const PFTaxDetail = require('../models/PFTaxDetail');
+            const User = require('../models/User'); 
+            
+            const user = await User.findOne({ employeeId: record.employeeId });
+            if (user) {
+                let pfTaxDoc = await PFTaxDetail.findOne({ user_id: user._id });
+                if (!pfTaxDoc) {
+                    pfTaxDoc = new PFTaxDetail({ user_id: user._id, pf_amount: 0 });
+                }
+                
+                const userRecords = await PFCalculation.find({ employeeId: record.employeeId });
+                const trueTotal = userRecords.reduce((sum, r) => sum + (r.totalPF || 0), 0);
+                
+                pfTaxDoc.pf_amount = trueTotal;
+                
+                let tax_percentage = 0;
+                if (pfTaxDoc.pf_amount > 2000000) {
+                    tax_percentage = 7;
+                } else if (pfTaxDoc.pf_amount > 1000000) {
+                    tax_percentage = 5;
+                } else if (pfTaxDoc.pf_amount >= 700000) {
+                    tax_percentage = 3;
+                }
+                
+                pfTaxDoc.tax_percentage = tax_percentage;
+                pfTaxDoc.tax_amount = (pfTaxDoc.pf_amount * tax_percentage) / 100;
+                pfTaxDoc.net_pf = pfTaxDoc.pf_amount - pfTaxDoc.tax_amount;
+                await pfTaxDoc.save();
+            }
+        }
 
         // 4. Clear Temp Records
         await EmployeeTemp.deleteMany({});
@@ -383,5 +434,17 @@ exports.processPayroll = async (req, res) => {
     } catch (error) {
         console.error('Process Payroll Error:', error);
         res.status(500).json({ message: 'Server Error during processing' });
+    }
+};
+
+// Get Processed PF List for Stats
+exports.getPFList = async (req, res) => {
+    try {
+        // Sort by totalPF descending to get Max at top and Min at bottom
+        const records = await PFCalculation.find().sort({ totalPF: -1 });
+        res.json(records);
+    } catch (error) {
+        console.error('Get PF List Error:', error);
+        res.status(500).json({ message: 'Server Error' });
     }
 };

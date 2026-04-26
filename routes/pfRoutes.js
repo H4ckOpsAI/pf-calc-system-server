@@ -15,4 +15,7 @@ router.get('/all', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), 
 // Get explicitly requested PF bounds safely (Read-Only)
 router.get('/:employeeId', authenticateJWT, authorizeRole(['PayrollOfficer', 'Admin']), pfController.getPFByEmployeeId);
 
+// Compare Candidates
+router.post('/compare', authenticateJWT, pfController.compareCandidates);
+
 module.exports = router;

@@ -165,13 +165,13 @@ exports.getComplianceReport = async (req, res) => {
                 }
             });
 
-            // Rule 4: Withdrawal > 80% of balance
+            // Rule 4: Withdrawal > 70% of balance
             // Note: Compliance check uses latest balance due to lack of historical snapshot at withdrawal time.
             if (pfRecords.length > 0) {
                 const latestBalance = pfRecords.sort((a, b) => (b.year - a.year) || (b.month - a.month))[0].cumulativeBalance;
                 withdrawals.forEach(w => {
-                    if (w.type === 'part-final' && w.amount > latestBalance * 0.80) {
-                        issues.push(`Withdrawal ₹${w.amount.toLocaleString()} exceeds 80% of balance ₹${latestBalance.toLocaleString()}`);
+                    if (w.type === 'part-final' && w.amount > latestBalance * 0.70) {
+                        issues.push(`Withdrawal ₹${w.amount.toLocaleString()} exceeds 70% of balance ₹${latestBalance.toLocaleString()}`);
                     }
                 });
             }
@@ -334,7 +334,7 @@ exports.exportComplianceCSV = async (req, res) => {
             if (pfRecords.length > 0) {
                 const latestBalance = pfRecords.sort((a, b) => (b.year - a.year) || (b.month - a.month))[0].cumulativeBalance;
                 withdrawals.forEach(w => {
-                    if (w.type === 'part-final' && w.amount > latestBalance * 0.80) issues.push(`Withdrawal ${w.amount} exceeds 80% of balance ${latestBalance}`);
+                    if (w.type === 'part-final' && w.amount > latestBalance * 0.70) issues.push(`Withdrawal ${w.amount} exceeds 70% of balance ${latestBalance}`);
                 });
             }
 

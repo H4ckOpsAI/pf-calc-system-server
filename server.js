@@ -36,6 +36,7 @@ const pfRoutes = require('./routes/pfRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const pfActionsRoutes = require('./routes/pfActionsRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const pfTaxRoutes = require('./routes/pfTaxRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -43,6 +44,7 @@ app.use('/api/pf', pfRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/actions', pfActionsRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/pf-tax', pfTaxRoutes);
 
 app.get('/', (req, res) => {
     res.send('API is running...');

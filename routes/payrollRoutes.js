@@ -20,6 +20,13 @@ router.get('/temp',
     payrollController.getTempPayroll
 );
 
+// Get calculated PF List
+router.get('/list',
+    authenticateJWT,
+    authorizeRole(['PayrollOfficer', 'Admin']),
+    payrollController.getPFList
+);
+
 // Process Payroll (Calculation)
 router.post('/process',
     authenticateJWT,

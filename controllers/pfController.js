@@ -125,3 +125,67 @@ exports.downloadTemplate = async (req, res) => {
         res.status(500).json({ message: 'Failed to generate template' });
     }
 };
+
+exports.compareCandidates = async (req, res) => {
+    try {
+        const { cand1, cand2 } = req.body;
+
+        const processCandidate = (cand) => {
+            let employeePF = 0;
+            let employerPF = 0;
+            const salary = Number(cand.salary) || 0;
+
+            if (cand.pfScheme === 'GPF') {
+                employeePF = Math.round(salary * 0.06);
+            } else if (cand.pfScheme === 'CPF') {
+                employeePF = Math.round(salary * 0.10);
+                employerPF = Math.round(salary * 0.10);
+            }
+
+            // Apply global boundary logic
+            if (employeePF > 40000) employeePF = 40000;
+            if (employerPF > 40000) employerPF = 40000;
+            
+            const totalPF = employeePF + employerPF;
+
+            const getArray = (str) => (str || '').split(',').map(s => s.trim()).filter(Boolean);
+            const skills = getArray(cand.skills);
+            
+            return {
+                ...cand,
+                employeePF,
+                employerPF,
+                totalPF,
+                skills,
+                experience: Number(cand.experience) || 0
+            };
+        };
+
+        const processedCand1 = processCandidate(cand1);
+        const processedCand2 = processCandidate(cand2);
+
+        // Analysis
+        const c1UniqueSkills = processedCand1.skills.filter(s => !processedCand2.skills.includes(s));
+        const c2UniqueSkills = processedCand2.skills.filter(s => !processedCand1.skills.includes(s));
+        
+        const pfDiff = processedCand2.totalPF - processedCand1.totalPF;
+        const expDiff = processedCand2.experience - processedCand1.experience;
+        const salaryDiff = processedCand2.salary - processedCand1.salary;
+
+        res.json({
+            cand1: processedCand1,
+            cand2: processedCand2,
+            analysis: {
+                c1UniqueSkills,
+                c2UniqueSkills,
+                pfDiff,
+                expDiff,
+                salaryDiff
+            }
+        });
+
+    } catch (error) {
+        console.error('Compare Candidates Error:', error);
+        res.status(500).json({ message: 'Server Error during comparison' });
+    }
+};

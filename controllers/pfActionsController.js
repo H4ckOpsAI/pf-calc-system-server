@@ -97,6 +97,17 @@ exports.requestWithdrawal = async (req, res) => {
         const employeeId = req.user.employeeId;
         const financialYear = getCurrentFinancialYear();
 
+        // Cooldown enforcement: check if last approved/processed withdrawal has active cooldown
+        const lastProcessed = await Withdrawal.findOne({
+            employeeId,
+            status: { $in: ['approved', 'processed'] }
+        }).sort({ approvedAt: -1 });
+
+        if (lastProcessed && lastProcessed.cooldownUntil && new Date() < lastProcessed.cooldownUntil) {
+            const cooldownDate = lastProcessed.cooldownUntil.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            return res.status(400).json({ message: `Withdrawal locked until ${cooldownDate}. Cooldown period is active.` });
+        }
+
         // Find latest cumulative balance
         const latestRecord = await PFCalculation.findOne({ employeeId }).sort({ year: -1, month: -1 });
         let currentBalance = latestRecord ? latestRecord.cumulativeBalance : 0;
@@ -108,9 +119,9 @@ exports.requestWithdrawal = async (req, res) => {
         });
 
         if (type === 'part-final') {
-            const maxAllowed = currentBalance * 0.80;
+            const maxAllowed = currentBalance * 0.70;
             if (amount > maxAllowed) {
-                return res.status(400).json({ message: `Amount exceeds 80% limit. Maximum allowed: ₹${maxAllowed.toFixed(2)}` });
+                return res.status(400).json({ message: `Amount exceeds 70% limit. Maximum allowed: ₹${maxAllowed.toFixed(2)}` });
             }
         }
 
@@ -220,15 +231,21 @@ exports.approveWithdrawal = async (req, res) => {
             const unprocessed = await Withdrawal.find({ employeeId: withdrawal.employeeId, status: 'approved' });
             unprocessed.forEach(w => currentBalance -= w.amount);
             
-            const maxAllowed = currentBalance * 0.80;
+            const maxAllowed = currentBalance * 0.70;
             if (withdrawal.amount > maxAllowed) {
-                return res.status(400).json({ message: `Amount now exceeds 80% limit. Approval aborted.` });
+                return res.status(400).json({ message: `Amount now exceeds 70% limit. Approval aborted.` });
             }
         }
 
         withdrawal.status = 'approved';
         withdrawal.approvedBy = req.user._id;
         withdrawal.approvedAt = new Date();
+
+        // Set 1-year cooldown from approvedAt
+        const cooldown = new Date(withdrawal.approvedAt);
+        cooldown.setFullYear(cooldown.getFullYear() + 1);
+        withdrawal.cooldownUntil = cooldown;
+
         await withdrawal.save();
 
         if (withdrawal.type === 'advance') {

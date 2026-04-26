@@ -10,7 +10,8 @@ const withdrawalSchema = new mongoose.Schema({
     requestedAt: { type: Date, default: Date.now },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     approvedAt: { type: Date },
-    processedAt: { type: Date }
+    processedAt: { type: Date },
+    cooldownUntil: { type: Date }
 });
 
 module.exports = mongoose.model('Withdrawal', withdrawalSchema);
